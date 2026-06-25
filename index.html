@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>图片混淆/解混淆 - 分析版</title>
+    <style>
+        body { font-family: Arial; max-width: 800px; margin: 20px auto; padding: 0 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 8px; }
+        img { max-width: 100%; margin: 10px 0; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+        select, input { padding: 8px; margin: 5px; }
+        .log { background: #f5f5f5; padding: 10px; font-family: monospace; white-space: pre-wrap; max-height: 300px; overflow-y: auto; }
+    </style>
+</head>
+<body>
+    <h1>图片混淆/解混淆 - 反混淆分析版</h1>
+
+    <div class="section">
+        <h3>原始算法核心逻辑（已还原）：</h3>
+        <pre>
+1. 把图片切成 N×N 个小方块（N = 等级数值，如4级 → 40×40 = 1600块）
+2. 混淆（加密）步骤：
+   a) 先把所有方块顺序完全颠倒（首尾互换）
+   b) 用默认密钥 "hadsky.com" 做一次伪随机打乱
+   c) 再用用户输入的密钥做一次伪随机打乱
+3. 解混淆（解密）步骤（完全反向操作）：
+   a) 先用用户密钥反向还原打乱
+   b) 再用默认密钥反向还原打乱
+   c) 最后把顺序完全颠倒回来
+        </pre>
+    </div>
+
+    <div class="section">
+        <h3>测试图片：</h3>
+        <input type="file" id="fileInput" accept="image/*"><br>
+        <img id="previewImg" src="" style="display:none">
+    </div>
+
+    <div class="section">
+        <h3>参数设置：</h3>
+        <label>等级：
+            <select id="level">
+                <option value="10">1级 (10×10=100块)</option>
+                <option value="20">2级 (20×20=400块)</option>
+                <option value="30">3级 (30×30=900块)</option>
+                <option value="40" selected>4级（默认）(40×40=1600块)</option>
+                <option value="50">5级 (50×50=2500块)</option>
+                <option value="60">6级 (60×60=3600块)</option>
+                <option value="70">7级 (70×70=4900块)</option>
+                <option value="80">8级（较慢）(80×80=6400块)</option>
+                <option value="90">9级（慢）(90×90=8100块)</option>
+                <option value="100">10级（很慢）(100×100=10000块)</option>
+            </select>
+        </label><br>
+        <label>密钥：<input type="text" id="key" value="tool.hadsky.com" style="width:300px"></label><br><br>
+        <button onclick="doEncrypt()">混淆（加密）</button>
+        <button onclick="doDecrypt()">解混淆（解密）</button>
+        <button onclick="doEncryptThenDecrypt()">混淆后再解混淆（验证）</button>
+    </div>
+
+    <div class="section">
+        <h3>结果：</h3>
+        <img id="resultImg" src="" style="display:none">
+    </div>
+
+    <div class="section">
+        <h3>运行日志：</h3>
+        <div id="logDiv" class="log"></div>
+    </div>
+
+    <canvas id="canvas" style="display:none"></canvas>
+
+    <script>
+    // ==================== 核心算法（已从混淆代码中还原） ====================
+
+    // 默认密钥（网站内置的，不可修改）
+    var DEFAULT_KEY = 'hadsky.com';
+
+    /**
+     * 伪随机数生成器 - 根据密钥和序号生成一个"随机"的索引位置
+     * 这是整个加密的灵魂：同样的密钥+同样的序号 = 同样的"随机"位置
+     *
+     * @param {string} key - 密钥字符串
+     * @param {number} num - 当前是第几轮（从1开始）
+     * @returns {number} 一个"随机"的索引值
+     */
+    function getRnd(key, num) {
+        // 第1步：用 num 对密钥长度取余，得到密钥中的一个位置
+        var idx = num % key.length;
+        // 第2步：取那个位置的字符的编码值，再对密钥长度取余
+        idx = key.charCodeAt(idx) % key.length;
+        // 第3步：把结果变成 "0.xxx" 的小数
+        idx = parseFloat('0.' + idx);
+        // 第4步：乘以 num 再取整，得到最终"随机"索引
+        return parseInt(idx * num);
+    }
+
+    /**
+     * 混淆（加密）- 把图片方块打乱
+     * @param {Array} blocks - 方块数组 [{data, x, y}, ...]
+     * @param {string} userKey - 用户密钥
+     * @returns {Array} 打乱后的方块数组
+     */
+    function shuffleEncrypt(blocks, userKey) {
+        // 第1步：完全颠倒顺序（首尾互换）
+        for (var i = 0; i < blocks.length / 2; i++) {
+            var temp = blocks[i];
+            blocks[i] = blocks[blocks.length - 1 - i];
+            blocks[blocks.length - 1 - i] = temp;
+        }
+        // 第2步：用默认密钥做伪随机打乱（从后往前）
+        for (var i = blocks.length - 1; i > 0; i--) {
+            var j = getRnd(DEFAULT_KEY, i + 1);
+            var temp = blocks[i];
+            blocks[i] = blocks[j];
+            blocks[j] = temp;
+        }
+        // 第3步：用用户密钥做伪随机打乱（从后往前）
+        if (userKey) {
+            for (var i = blocks.length - 1; i > 0; i--) {
+                var j = getRnd(userKey, i + 1);
+                var temp = blocks[i];
+                blocks[i] = blocks[j];
+                blocks[j] = temp;
+            }
+        }
+        return blocks;
+    }
+
+    /**
+     * 解混淆（解密）- 把打乱的方块还原
+     * @param {Array} blocks - 被打乱的方块数组
+     * @param {string} userKey - 用户密钥
+     * @returns {Array} 还原后的方块数组
+     */
+    function shuffleDecrypt(blocks, userKey) {
+        // 第1步：用用户密钥反向还原（从前往后，反向交换）
+        if (userKey) {
+            for (var i = 0; i < blocks.length; i++) {
+                var j = getRnd(userKey, i + 1);
+                var temp = blocks[j];
+                blocks[j] = blocks[i];
+                blocks[i] = temp;
+            }
+        }
+        // 第2步：用默认密钥反向还原（从前往后，反向交换）
+        for (var i = 0; i < blocks.length; i++) {
+            var j = getRnd(DEFAULT_KEY, i + 1);
+            var temp = blocks[j];
+            blocks[j] = blocks[i];
+            blocks[i] = temp;
+        }
+        // 第3步：再次完全颠倒顺序
+        for (var i = 0; i < blocks.length / 2; i++) {
+            var temp = blocks[i];
+            blocks[i] = blocks[blocks.length - 1 - i];
+            blocks[blocks.length - 1 - i] = temp;
+        }
+        return blocks;
+    }
+
+    // ==================== 图片处理部分 ====================
+
+    var currentImg = null;
+
+    document.getElementById('fileInput').addEventListener('change', function(e) {
+        var file = e.target.files[0];
+        if (!file) return;
+        var reader = new FileReader();
+        reader.onload = function(ev) {
+            var img = new Image();
+            img.onload = function() {
+                currentImg = img;
+                document.getElementById('previewImg').src = ev.target.result;
+                document.getElementById('previewImg').style.display = 'block';
+                log('图片已加载: ' + img.width + '×' + img.height + ' 像素');
+            };
+            img.src = ev.target.result;
+        };
+        reader.readAsDataURL(file);
+    });
+
+    /**
+     * 把图片切成小方块
+     * @returns {Object} {blocks, blockW, blockH, gridSize, imgW, imgH}
+     */
+    function splitImage() {
+        if (!currentImg) { alert('请先选择图片！'); return null; }
+
+        var level = parseInt(document.getElementById('level').value);
+        var gridSize = level * level;  // 等级的平方 = 总块数
+        var imgW = currentImg.width;
+        var imgH = currentImg.height;
+
+        // 每个小方块的宽高
+        var blockW = parseInt(imgW / level);
+        var blockH = parseInt(imgH / level);
+
+        log('等级: ' + level + ', 网格: ' + level + '×' + level + ' = ' + gridSize + ' 块');
+        log('每块大小: ' + blockW + '×' + blockH + ' 像素');
+
+        var canvas = document.getElementById('canvas');
+        canvas.width = imgW;
+        canvas.height = imgH;
+        var ctx = canvas.getContext('2d');
+        ctx.drawImage(currentImg, 0, 0);
+
+        var blocks = [];
+        var posX = 0, posY = 0;
+
+        // 按行扫描，把图片切成一块一块
+        for (var row = 0; row < level; row++) {
+            for (var col = 0; col < level; col++) {
+                var idx = row * level + col;
+                // 创建临时画布来存放这一小块
+                var tmpCanvas = document.createElement('canvas');
+                tmpCanvas.width = blockW;
+                tmpCanvas.height = blockH;
+                var tmpCtx = tmpCanvas.getContext('2d');
+                // 从原图中截取这一小块
+                tmpCtx.drawImage(currentImg, posX, posY, blockW, blockH, 0, 0, blockW, blockH);
+                blocks.push({
+                    data: tmpCtx.getImageData(0, 0, blockW, blockH),
+                    x: 0,
+                    y: 0
+                });
+                posX += blockW;
+            }
+            posX = 0;
+            posY += blockH;
+        }
+
+        return { blocks: blocks, blockW: blockW, blockH: blockH, gridSize: gridSize, level: level, imgW: imgW, imgH: imgH };
+    }
+
+    /**
+     * 把方块数组重新拼成完整图片
+     */
+    function mergeBlocks(blocks, blockW, blockH, level, imgW, imgH) {
+        var canvas = document.createElement('canvas');
+        canvas.width = imgW;
+        canvas.height = imgH;
+        var ctx = canvas.getContext('2d');
+
+        blocks.forEach(function(block, index) {
+            var row = parseInt(index / level);
+            var col = index % level;
+            ctx.putImageData(block.data, col * blockW, row * blockH);
+        });
+
+        return canvas.toDataURL();
+    }
+
+    function log(msg) {
+        var el = document.getElementById('logDiv');
+        el.textContent += '[' + new Date().toLocaleTimeString() + '] ' + msg + '\n';
+        el.scrollTop = el.scrollHeight;
+    }
+
+    function doEncrypt() {
+        var info = splitImage();
+        if (!info) return;
+
+        var userKey = document.getElementById('key').value;
+        log('开始混淆（加密），密钥: "' + userKey + '"');
+
+        var result = shuffleEncrypt(info.blocks, userKey);
+        var dataUrl = mergeBlocks(result, info.blockW, info.blockH, info.level, info.imgW, info.imgH);
+
+        document.getElementById('resultImg').src = dataUrl;
+        document.getElementById('resultImg').style.display = 'block';
+        log('混淆完成！');
+    }
+
+    function doDecrypt() {
+        var info = splitImage();
+        if (!info) return;
+
+        var userKey = document.getElementById('key').value;
+        log('开始解混淆（解密），密钥: "' + userKey + '"');
+
+        var result = shuffleDecrypt(info.blocks, userKey);
+        var dataUrl = mergeBlocks(result, info.blockW, info.blockH, info.level, info.imgW, info.imgH);
+
+        document.getElementById('resultImg').src = dataUrl;
+        document.getElementById('resultImg').style.display = 'block';
+        log('解混淆完成！');
+    }
+
+    function doEncryptThenDecrypt() {
+        var info = splitImage();
+        if (!info) return;
+
+        var userKey = document.getElementById('key').value;
+        log('=== 验证测试：先混淆再解混淆 ===');
+
+        var encrypted = shuffleEncrypt(JSON.parse(JSON.stringify(info.blocks.map(function(b) {
+            return { data: b.data, x: b.x, y: b.y };
+        }))), userKey);
+
+        // 需要深拷贝，因为ImageData不能直接JSON序列化
+        var encCanvas = mergeBlocks(encrypted, info.blockW, info.blockH, info.level, info.imgW, info.imgH);
+        log('中间结果（混淆后）已生成');
+
+        // 重新加载混淆后的图片再解密
+        var img = new Image();
+        img.onload = function() {
+            var canvas = document.getElementById('canvas');
+            canvas.width = img.width;
+            canvas.height = img.height;
+            var ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+
+            var blocks2 = [];
+            for (var row = 0; row < info.level; row++) {
+                for (var col = 0; col < info.level; col++) {
+                    var tmpCanvas = document.createElement('canvas');
+                    tmpCanvas.width = info.blockW;
+                    tmpCanvas.height = info.blockH;
+                    var tmpCtx = tmpCanvas.getContext('2d');
+                    tmpCtx.drawImage(img, col * info.blockW, row * info.blockH, info.blockW, info.blockH, 0, 0, info.blockW, info.blockH);
+                    blocks2.push({ data: tmpCtx.getImageData(0, 0, info.blockW, info.blockH), x: 0, y: 0 });
+                }
+            }
+
+            var decrypted = shuffleDecrypt(blocks2, userKey);
+            var dataUrl = mergeBlocks(decrypted, info.blockW, info.blockH, info.level, info.imgW, info.imgH);
+            document.getElementById('resultImg').src = dataUrl;
+            document.getElementById('resultImg').style.display = 'block';
+            log('=== 验证完成！如果结果和原图一样，说明算法还原正确 ===');
+        };
+        img.src = encCanvas;
+    }
+    </script>
+</body>
+</html>
