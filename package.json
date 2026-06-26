@@ -1,0 +1,8 @@
+{
+  "name": "picaes",
+  "private": true,
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "sharp": "^0.33.0"
+  }
+}

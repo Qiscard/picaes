@@ -17,8 +17,8 @@
 
     <!-- API 调用区域 -->
     <div class="section" style="border-color: #4361ee; background: #f8f9ff;">
-        <h3 style="color: #4361ee;">🌐 API 调用（服务端处理）</h3>
-        <p style="color: #666; font-size: 14px; margin: 8px 0;">通过服务端 API 处理图片，支持大图，适合程序化调用。</p>
+        <h3 style="color: #4361ee;">🌐 API 调用（Vercel 云函数）</h3>
+        <p style="color: #666; font-size: 14px; margin: 8px 0;">通过 Vercel 云函数处理图片，支持 API 调用。</p>
         <label>图片：<input type="file" id="apiFileInput" accept="image/*"></label><br>
         <label>等级：
             <select id="apiLevel">
@@ -380,7 +380,7 @@
         resultEl.innerHTML = '';
         log('API ' + (mode === 'encrypt' ? '加密' : '解密') + '请求发送中...');
 
-        fetch('/api/proxy', {
+        fetch('/api/process', {
             method: 'POST',
             body: formData
         })
