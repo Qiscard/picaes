@@ -2,7 +2,7 @@
 // 文件路径: api/process.js
 const sharp = require('sharp');
 
-// ==================== 混淆算法（与客户端一致）====================
+// ==================== 混淆算法 ====================
 const DEFAULT_KEY = 'hadsky.com';
 
 function getRnd(key, num) {
@@ -42,31 +42,38 @@ function shuffleDecrypt(blocks, userKey) {
     return blocks;
 }
 
-// ==================== 图片处理核心 ====================
+// ==================== 核心处理：只用 Sharp 解码/编码各一次 ====================
 async function processImage(imageBuffer, level, key, mode) {
-    const N = level * 10;
+    const N = level * 10; // 等级 4 → 40×40 = 1600 块
+
+    // Sharp 解码：图片 → raw 像素 buffer（只调一次）
     const image = sharp(imageBuffer);
     const meta = await image.metadata();
     const imgW = meta.width;
     const imgH = meta.height;
-    const channels = meta.channels || 3;
+    const ch = meta.channels || 3;
+    const rawBuf = await image.raw().toBuffer();
 
     const blockW = Math.floor(imgW / N);
     const blockH = Math.floor(imgH / N);
+    const srcStride = imgW * ch;        // 原图每行字节数
+    const blkStride = blockW * ch;      // 每个小块每行字节数
 
-    // 提取所有方块（raw 像素数据）
-    const extractOps = [];
+    // 从 rawBuf 中切出所有方块（纯内存操作，零 Sharp 调用）
+    const blocks = [];
     for (let row = 0; row < N; row++) {
         for (let col = 0; col < N; col++) {
-            extractOps.push(
-                image.clone()
-                    .extract({ left: col * blockW, top: row * blockH, width: blockW, height: blockH })
-                    .raw()
-                    .toBuffer()
-            );
+            const blockBuf = Buffer.alloc(blockH * blkStride);
+            const srcX = col * blockW;
+            const srcY = row * blockH;
+            for (let y = 0; y < blockH; y++) {
+                const srcOff = (srcY + y) * srcStride + srcX * ch;
+                const dstOff = y * blkStride;
+                rawBuf.copy(blockBuf, dstOff, srcOff, srcOff + blkStride);
+            }
+            blocks.push(blockBuf);
         }
     }
-    const blocks = await Promise.all(extractOps);
 
     // 混淆/解混淆
     if (mode === 'encrypt') {
@@ -75,26 +82,24 @@ async function processImage(imageBuffer, level, key, mode) {
         shuffleDecrypt(blocks, key);
     }
 
-    // 拼回图片
-    const bg = channels === 4 ? { r: 0, g: 0, b: 0, alpha: 1 } : { r: 0, g: 0, b: 0 };
-    const canvasBuf = Buffer.alloc(imgW * imgH * channels);
-
-    // 用 sharp 创建底图填入 buffer
-    const bgBuf = await sharp({ create: { width: imgW, height: imgH, channels, background: bg } }).raw().toBuffer();
-    bgBuf.copy(canvasBuf);
-
+    // 把打乱后的方块拼回 rawBuf（纯内存操作，零 Sharp 调用）
     for (let i = 0; i < blocks.length; i++) {
         const row = Math.floor(i / N);
         const col = i % N;
         const blockBuf = blocks[i];
+        const dstX = col * blockW;
+        const dstY = row * blockH;
         for (let y = 0; y < blockH; y++) {
-            const srcOff = y * blockW * channels;
-            const dstOff = ((row * blockH + y) * imgW + col * blockW) * channels;
-            blockBuf.copy(canvasBuf, dstOff, srcOff, srcOff + blockW * channels);
+            const srcOff = y * blkStride;
+            const dstOff = (dstY + y) * srcStride + dstX * ch;
+            blockBuf.copy(rawBuf, dstOff, srcOff, srcOff + blkStride);
         }
     }
 
-    return sharp(canvasBuf, { raw: { width: imgW, height: imgH, channels } }).png().toBuffer();
+    // Sharp 编码：raw 像素 → PNG（只调一次）
+    return sharp(rawBuf, { raw: { width: imgW, height: imgH, channels: ch } })
+        .png()
+        .toBuffer();
 }
 
 // ==================== 解析 multipart/form-data ====================
@@ -114,7 +119,6 @@ function parseMultipart(buffer, boundary) {
         const body = part.slice(headerEnd + 4, part.length - 2);
         const nameMatch = header.match(/name="([^"]+)"/);
         const filenameMatch = header.match(/filename="([^"]+)"/);
-        const ctMatch = header.match(/Content-Type:\s*(.+)/i);
         if (nameMatch) {
             if (filenameMatch) {
                 result.file = { filename: filenameMatch[1], buffer: body };
@@ -138,7 +142,7 @@ module.exports = async function handler(req, res) {
         return res.status(200).json({
             status: 'ok',
             message: '图片加密/解密 API（Vercel 云函数）',
-            version: '2.0',
+            version: '2.1',
             usage: { method: 'POST', params: { image: '图片文件', level: '1-10', key: '密钥(可选)', mode: 'encrypt/decrypt(可选)' } }
         });
     }
@@ -166,7 +170,8 @@ module.exports = async function handler(req, res) {
         const key = parsed.fields.key || 'tool.hadsky.com';
         const mode = parsed.fields.mode || 'encrypt';
 
-        console.log(`${mode} | lv${level}(${level*10}x${level*10}) | ${parsed.file.filename} (${(parsed.file.buffer.length/1024).toFixed(0)}KB)`);
+        const imgSizeMB = (parsed.file.buffer.length / 1024 / 1024).toFixed(1);
+        console.log(`${mode} | lv${level}(${level*10}x${level*10}) | ${parsed.file.filename} (${imgSizeMB}MB)`);
 
         const result = await processImage(parsed.file.buffer, level, key, mode);
 
